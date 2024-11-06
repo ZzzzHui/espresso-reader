@@ -180,7 +180,7 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 				// get epoch length and last open epoch
 				epochLength := e.evmReader.GetEpochLengthCache(appAddress)
 				if epochLength == 0 {
-					slog.Error("could not obtain epoch length", "err", err)
+					slog.Error("could not obtain epoch length")
 					continue
 				}
 				currentEpoch, err := e.repository.GetEpoch(ctx,

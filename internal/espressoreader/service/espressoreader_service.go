@@ -143,6 +143,13 @@ type NonceResponse struct {
 }
 
 func (s *EspressoReaderService) requestNonce(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers")
+	if r.Method != http.MethodPost {
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		slog.Error("could not read body", "err", err)
@@ -165,9 +172,6 @@ func (s *EspressoReaderService) requestNonce(w http.ResponseWriter, r *http.Requ
 		slog.Error("error json marshal nonce response", "err", err)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers")
 	err = json.NewEncoder(w).Encode(nonceResponse)
 	if err != nil {
 		slog.Info("Internal server error",
@@ -197,6 +201,9 @@ func (s *EspressoReaderService) submit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers")
+	if r.Method != http.MethodPost {
+		return
+	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

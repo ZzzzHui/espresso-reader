@@ -13,10 +13,10 @@ require (
 require github.com/BurntSushi/toml v1.4.0
 
 require (
+	github.com/EspressoSystems/espresso-sequencer-go v0.0.26
 	github.com/aws/aws-sdk-go-v2 v1.32.2
 	github.com/aws/aws-sdk-go-v2/config v1.18.45
 	github.com/aws/aws-sdk-go-v2/service/kms v1.37.2
-	github.com/EspressoSystems/espresso-sequencer-go v0.0.24
 	github.com/deepmap/oapi-codegen/v2 v2.1.0
 	github.com/golang-migrate/migrate/v4 v4.18.1
 	github.com/jackc/pgx/v5 v5.7.1

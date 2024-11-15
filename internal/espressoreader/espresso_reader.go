@@ -91,30 +91,36 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 
 	// main polling loop
 	for {
-		// fetch latest espresso block height
-		latestBlockHeight, err := e.client.FetchLatestBlockHeight(ctx)
-		if err != nil {
-			slog.Error("failed fetching latest espresso block height", "error", err)
-			continue
-		}
-		slog.Debug("Espresso:", "latestBlockHeight", latestBlockHeight)
+		select {
+		case <-ctx.Done():
+			slog.Info("exiting espresso reader")
+			return ctx.Err()
+		default:
+			// fetch latest espresso block height
+			latestBlockHeight, err := e.client.FetchLatestBlockHeight(ctx)
+			if err != nil {
+				slog.Error("failed fetching latest espresso block height", "error", err)
+				continue
+			}
+			slog.Debug("Espresso:", "latestBlockHeight", latestBlockHeight)
 
-		// take a break :)
-		if latestBlockHeight <= currentBlockHeight {
-			var delay time.Duration = 1000
-			time.Sleep(delay * time.Millisecond)
-			continue
-		}
+			// take a break :)
+			if latestBlockHeight <= currentBlockHeight {
+				var delay time.Duration = 1000
+				time.Sleep(delay * time.Millisecond)
+				continue
+			}
 
-		for ; currentBlockHeight < latestBlockHeight; currentBlockHeight++ {
-			slog.Debug("Espresso:", "currentBlockHeight", currentBlockHeight, "namespace", e.namespace)
+			for ; currentBlockHeight < latestBlockHeight; currentBlockHeight++ {
+				slog.Debug("Espresso:", "currentBlockHeight", currentBlockHeight, "namespace", e.namespace)
 
-			//** read base layer **//
+				//** read base layer **//
 
-			l1FinalizedHeight, l1FinalizedTimestamp = e.readL1(ctx, currentBlockHeight, l1FinalizedHeight)
+				l1FinalizedHeight, l1FinalizedTimestamp = e.readL1(ctx, currentBlockHeight, l1FinalizedHeight)
 
-			//** read espresso **//
-			e.readEspresso(ctx, currentBlockHeight, l1FinalizedHeight, l1FinalizedTimestamp)
+				//** read espresso **//
+				e.readEspresso(ctx, currentBlockHeight, l1FinalizedHeight, l1FinalizedTimestamp)
+			}
 		}
 	}
 }

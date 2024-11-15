@@ -283,12 +283,10 @@ func (e *EspressoReader) readEspressoHeader(espressoBlockHeight uint64) string {
 	res, err := http.Get(requestURL)
 	if err != nil {
 		slog.Error("error making http request", "err", err)
-		os.Exit(1)
 	}
 	resBody, err := io.ReadAll(res.Body)
 	if err != nil {
 		slog.Error("could not read response body", "err", err)
-		os.Exit(1)
 	}
 
 	return string(resBody)
@@ -296,6 +294,11 @@ func (e *EspressoReader) readEspressoHeader(espressoBlockHeight uint64) string {
 
 func (e *EspressoReader) getL1FinalizedHeight(espressoBlockHeight uint64) (uint64, uint64) {
 	espressoHeader := e.readEspressoHeader(espressoBlockHeight)
+	for len(espressoHeader) == 0 {
+		slog.Debug("error fetching espresso header", "at height", espressoBlockHeight)
+		slog.Debug("retrying fetching header")
+		espressoHeader = e.readEspressoHeader(espressoBlockHeight)
+	}
 
 	l1FinalizedNumber := gjson.Get(espressoHeader, "fields.l1_finalized.number").Uint()
 

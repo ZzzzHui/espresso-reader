@@ -184,16 +184,17 @@ func (pg *Database) getAllApplicationsByStatus(
 	criteria *ApplicationStatus,
 ) ([]Application, error) {
 	var (
-		id                   uint64
-		contractAddress      Address
-		templateHash         Hash
-		templateUri          string
-		lastProcessedBlock   uint64
-		lastClaimCheckBlock  uint64
-		lastOutputCheckBlock uint64
-		status               ApplicationStatus
-		iConsensusAddress    Address
-		results              []Application
+		id                         uint64
+		contractAddress            Address
+		templateHash               Hash
+		templateUri                string
+		lastProcessedBlock         uint64
+		lastProcessedEspressoBlock uint64
+		lastClaimCheckBlock        uint64
+		lastOutputCheckBlock       uint64
+		status                     ApplicationStatus
+		iConsensusAddress          Address
+		results                    []Application
 	)
 
 	query := `
@@ -203,6 +204,7 @@ func (pg *Database) getAllApplicationsByStatus(
 		template_hash,
 		template_uri,
 		last_processed_block,
+		last_processed_espresso_block,
 		last_claim_check_block,
 		last_output_check_block,
 		status,
@@ -223,19 +225,20 @@ func (pg *Database) getAllApplicationsByStatus(
 
 	_, err = pgx.ForEachRow(rows,
 		[]any{&id, &contractAddress, &templateHash, &templateUri,
-			&lastProcessedBlock, &lastClaimCheckBlock, &lastOutputCheckBlock,
+			&lastProcessedBlock, &lastProcessedEspressoBlock, &lastClaimCheckBlock, &lastOutputCheckBlock,
 			&status, &iConsensusAddress},
 		func() error {
 			app := Application{
-				Id:                   id,
-				ContractAddress:      contractAddress,
-				TemplateHash:         templateHash,
-				TemplateUri:          templateUri,
-				LastProcessedBlock:   lastProcessedBlock,
-				LastClaimCheckBlock:  lastClaimCheckBlock,
-				LastOutputCheckBlock: lastOutputCheckBlock,
-				Status:               status,
-				IConsensusAddress:    iConsensusAddress,
+				Id:                         id,
+				ContractAddress:            contractAddress,
+				TemplateHash:               templateHash,
+				TemplateUri:                templateUri,
+				LastProcessedBlock:         lastProcessedBlock,
+				LastProcessedEspressoBlock: lastProcessedEspressoBlock,
+				LastClaimCheckBlock:        lastClaimCheckBlock,
+				LastOutputCheckBlock:       lastOutputCheckBlock,
+				Status:                     status,
+				IConsensusAddress:          iConsensusAddress,
 			}
 			results = append(results, app)
 			return nil

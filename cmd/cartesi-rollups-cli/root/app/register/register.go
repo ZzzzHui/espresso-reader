@@ -35,6 +35,7 @@ var (
 	templatePath                  string
 	templateHash                  string
 	inputBoxDeploymentBlockNumber uint64
+	lastProcessedEspressoBlock    uint64
 	status                        string
 	iConsensusAddress             string
 	printAsJSON                   bool
@@ -85,6 +86,14 @@ func init() {
 		"InputBox deployment block number",
 	)
 
+	Cmd.Flags().Uint64VarP(
+		&lastProcessedEspressoBlock,
+		"espresso-starting-block",
+		"l",
+		0,
+		"Espresso starting block",
+	)
+
 	Cmd.Flags().StringVarP(
 		&status,
 		"status",
@@ -130,12 +139,13 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	application := model.Application{
-		ContractAddress:    common.HexToAddress(applicationAddress),
-		TemplateUri:        templatePath,
-		TemplateHash:       common.HexToHash(templateHash),
-		LastProcessedBlock: inputBoxDeploymentBlockNumber,
-		Status:             applicationStatus,
-		IConsensusAddress:  common.HexToAddress(iConsensusAddress),
+		ContractAddress:            common.HexToAddress(applicationAddress),
+		TemplateUri:                templatePath,
+		TemplateHash:               common.HexToHash(templateHash),
+		LastProcessedBlock:         inputBoxDeploymentBlockNumber,
+		LastProcessedEspressoBlock: lastProcessedEspressoBlock,
+		Status:                     applicationStatus,
+		IConsensusAddress:          common.HexToAddress(iConsensusAddress),
 	}
 
 	_, err := cmdcommon.Database.InsertApplication(ctx, &application)

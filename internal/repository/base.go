@@ -131,6 +131,7 @@ func (pg *Database) InsertApplication(
 		template_hash,
 		template_uri,
 		last_processed_block,
+		last_processed_espresso_block,
 		last_claim_check_block,
 		last_output_check_block,
 		status,
@@ -140,6 +141,7 @@ func (pg *Database) InsertApplication(
 		@templateHash,
 		@templateUri,
 		@lastProcessedBlock,
+		@lastProcessedEspressoBlock,
 		@lastClaimCheckBlock,
 		@lastOutputCheckBlock,
 		@status,
@@ -148,14 +150,15 @@ func (pg *Database) InsertApplication(
 		id
 	`
 	args := pgx.NamedArgs{
-		"contractAddress":      app.ContractAddress,
-		"templateHash":         app.TemplateHash,
-		"templateUri":          app.TemplateUri,
-		"lastProcessedBlock":   app.LastProcessedBlock,
-		"lastClaimCheckBlock":  app.LastClaimCheckBlock,
-		"lastOutputCheckBlock": app.LastOutputCheckBlock,
-		"status":               app.Status,
-		"iConsensusAddress":    app.IConsensusAddress,
+		"contractAddress":            app.ContractAddress,
+		"templateHash":               app.TemplateHash,
+		"templateUri":                app.TemplateUri,
+		"lastProcessedBlock":         app.LastProcessedBlock,
+		"lastProcessedEspressoBlock": app.LastProcessedEspressoBlock,
+		"lastClaimCheckBlock":        app.LastClaimCheckBlock,
+		"lastOutputCheckBlock":       app.LastOutputCheckBlock,
+		"status":                     app.Status,
+		"iConsensusAddress":          app.IConsensusAddress,
 	}
 
 	execParametersQuery := `
@@ -426,15 +429,16 @@ func (pg *Database) GetApplication(
 	appAddressKey Address,
 ) (*Application, error) {
 	var (
-		id                   uint64
-		contractAddress      Address
-		templateHash         Hash
-		templateUri          string
-		lastProcessedBlock   uint64
-		lastClaimCheckBlock  uint64
-		lastOutputCheckBlock uint64
-		status               ApplicationStatus
-		iconsensusAddress    Address
+		id                         uint64
+		contractAddress            Address
+		templateHash               Hash
+		templateUri                string
+		lastProcessedBlock         uint64
+		lastProcessedEspressoBlock uint64
+		lastClaimCheckBlock        uint64
+		lastOutputCheckBlock       uint64
+		status                     ApplicationStatus
+		iconsensusAddress          Address
 	)
 
 	query := `
@@ -444,6 +448,7 @@ func (pg *Database) GetApplication(
 		template_hash,
 		template_uri,
 		last_processed_block,
+		last_processed_espresso_block,
 		last_claim_check_block,
 		last_output_check_block,
 		status,
@@ -463,6 +468,7 @@ func (pg *Database) GetApplication(
 		&templateHash,
 		&templateUri,
 		&lastProcessedBlock,
+		&lastProcessedEspressoBlock,
 		&lastClaimCheckBlock,
 		&lastOutputCheckBlock,
 		&status,
@@ -479,18 +485,56 @@ func (pg *Database) GetApplication(
 	}
 
 	app := Application{
-		Id:                   id,
-		ContractAddress:      contractAddress,
-		TemplateHash:         templateHash,
-		TemplateUri:          templateUri,
-		LastProcessedBlock:   lastProcessedBlock,
-		LastClaimCheckBlock:  lastClaimCheckBlock,
-		LastOutputCheckBlock: lastOutputCheckBlock,
-		Status:               status,
-		IConsensusAddress:    iconsensusAddress,
+		Id:                         id,
+		ContractAddress:            contractAddress,
+		TemplateHash:               templateHash,
+		TemplateUri:                templateUri,
+		LastProcessedBlock:         lastProcessedBlock,
+		LastProcessedEspressoBlock: lastProcessedEspressoBlock,
+		LastClaimCheckBlock:        lastClaimCheckBlock,
+		LastOutputCheckBlock:       lastOutputCheckBlock,
+		Status:                     status,
+		IConsensusAddress:          iconsensusAddress,
 	}
 
 	return &app, nil
+}
+
+func (pg *Database) UpdateLastProcessedEspressoBlock(
+	ctx context.Context,
+	espressoBlockNumber uint64,
+	appAddressKey Address,
+) error {
+	updateLastBlockQuery := `
+	UPDATE application
+	SET
+		last_processed_espresso_block = @espressoBlockNumber
+	WHERE
+		contract_address=@appAddressKey`
+
+	tx, err := pg.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Update last processed block
+	updateLastBlockArgs := pgx.NamedArgs{
+		"espressoBlockNumber": espressoBlockNumber,
+		"appAddressKey":       appAddressKey,
+	}
+
+	_, err = tx.Exec(ctx, updateLastBlockQuery, updateLastBlockArgs)
+	if err != nil {
+		return errors.Join(err, tx.Rollback(ctx))
+	}
+
+	// Commit transaction
+	err = tx.Commit(ctx)
+	if err != nil {
+		return errors.Join(err, tx.Rollback(ctx))
+	}
+
+	return nil
 }
 
 func (pg *Database) UpdateApplicationStatus(

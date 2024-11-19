@@ -46,50 +46,8 @@ func NewEspressoReader(url string, startingBlock uint64, namespace uint64, repos
 }
 
 func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
-	currentBlockHeight := e.startingBlock
-	if currentBlockHeight == 0 {
-		lastestEspressoBlockHeight, err := e.client.FetchLatestBlockHeight(ctx)
-		if err != nil {
-			return err
-		}
-		currentBlockHeight = lastestEspressoBlockHeight
-		slog.Info("Espresso: starting from latest block height", "lastestEspressoBlockHeight", lastestEspressoBlockHeight)
-	}
-	l1FinalizedHeight := e.inputBoxDeploymentBlock - 1 // because we have a +1 in the loop
-	var l1FinalizedTimestamp uint64
-
 	ready <- struct{}{}
 
-	// bootstrap
-	latestBlockHeight, err := e.client.FetchLatestBlockHeight(ctx)
-	if err != nil {
-		slog.Error("failed fetching latest espresso block height while bootstrapping", "error", err)
-	}
-	slog.Debug("bootstrapping Espresso:", "from", currentBlockHeight, "to", latestBlockHeight)
-	// check if need to bootstrap
-	if latestBlockHeight > currentBlockHeight {
-		// bootstrapping
-		var nsTables []string
-		err = json.Unmarshal([]byte(e.getNSTableByRange(currentBlockHeight, latestBlockHeight+1)), &nsTables)
-		if err != nil {
-			slog.Error("failed fetching ns tables while bootstrapping", "error", err, "ns table", nsTables)
-		} else {
-			for index, nsTable := range nsTables {
-				// slog.Debug("bootstrapping", "block", currentBlockHeight+uint64(index))
-				nsTableBytes, _ := base64.StdEncoding.DecodeString(nsTable)
-				ns := e.extractNS(nsTableBytes)
-				if slices.Contains(ns, uint32(e.namespace)) {
-					slog.Debug("bootstrapping found namespace contained in", "block", currentBlockHeight+uint64(index))
-					l1FinalizedHeight, l1FinalizedTimestamp = e.readL1(ctx, currentBlockHeight+uint64(index), l1FinalizedHeight)
-					e.readEspresso(ctx, currentBlockHeight+uint64(index), l1FinalizedHeight, l1FinalizedTimestamp)
-				}
-			}
-			currentBlockHeight = latestBlockHeight + 1
-		}
-	}
-	// end of bootstrapping
-
-	// main polling loop
 	for {
 		select {
 		case <-ctx.Done():
@@ -104,48 +62,99 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 			}
 			slog.Debug("Espresso:", "latestBlockHeight", latestBlockHeight)
 
+			apps := e.getAppsForEvmReader(ctx)
+			if len(apps) > 0 {
+				for _, app := range apps {
+					lastProcessedEspressoBlock := app.Application.LastProcessedEspressoBlock
+					lastProcessedL1Block := app.Application.LastProcessedBlock
+					appAddress := app.Application.ContractAddress
+					if lastProcessedEspressoBlock <= e.startingBlock {
+						if e.startingBlock != 0 {
+							lastProcessedEspressoBlock = e.startingBlock
+						} else {
+							lastProcessedEspressoBlock = latestBlockHeight
+						}
+					}
+					if lastProcessedL1Block < e.inputBoxDeploymentBlock {
+						lastProcessedL1Block = e.inputBoxDeploymentBlock - 1
+					}
+					slog.Debug("reading Espresso:", "app", appAddress, "last-processed-block", lastProcessedEspressoBlock, "to-block", latestBlockHeight)
+					err = e.read(ctx, app, lastProcessedEspressoBlock, latestBlockHeight, lastProcessedL1Block)
+					if err != nil {
+						slog.Error("failed reading inputs", "error", err)
+						continue
+					}
+
+					// update lastProcessedEspressoBlock in db
+					err = e.repository.UpdateLastProcessedEspressoBlock(ctx, latestBlockHeight, app.Application.ContractAddress)
+					if err != nil {
+						slog.Error("failed updating last processed espresso block", "error", err)
+						continue
+					}
+				}
+			}
+
 			// take a break :)
-			if latestBlockHeight <= currentBlockHeight {
-				var delay time.Duration = 1000
-				time.Sleep(delay * time.Millisecond)
-				continue
-			}
-
-			for ; currentBlockHeight < latestBlockHeight; currentBlockHeight++ {
-				slog.Debug("Espresso:", "currentBlockHeight", currentBlockHeight, "namespace", e.namespace)
-
-				//** read base layer **//
-
-				l1FinalizedHeight, l1FinalizedTimestamp = e.readL1(ctx, currentBlockHeight, l1FinalizedHeight)
-
-				//** read espresso **//
-				e.readEspresso(ctx, currentBlockHeight, l1FinalizedHeight, l1FinalizedTimestamp)
-			}
+			var delay time.Duration = 1000
+			time.Sleep(delay * time.Millisecond)
 		}
 	}
 }
 
-func (e *EspressoReader) readL1(ctx context.Context, currentBlockHeight uint64, l1FinalizedHeight uint64) (uint64, uint64) {
+func (e *EspressoReader) read(ctx context.Context, app evmreader.TypeExportApplication, lastProcessedEspressoBlock uint64, latestBlockHeight uint64, l1FinalizedHeight uint64) error {
+	if latestBlockHeight > lastProcessedEspressoBlock {
+		var nsTables []string
+		nsTableBytes := []byte(e.getNSTableByRange(lastProcessedEspressoBlock+1, latestBlockHeight+1))
+		for len(nsTableBytes) == 0 {
+			select {
+			case <-ctx.Done():
+				slog.Info("exiting espresso reader")
+				return ctx.Err()
+			default:
+				slog.Debug("ns table is empty in current block range. Retry fetching")
+				var delay time.Duration = 1000
+				time.Sleep(delay * time.Millisecond)
+				nsTableBytes = []byte(e.getNSTableByRange(lastProcessedEspressoBlock+1, latestBlockHeight+1))
+			}
+		}
+		err := json.Unmarshal(nsTableBytes, &nsTables)
+		if err != nil {
+			slog.Error("failed fetching ns tables", "error", err, "ns table", nsTables)
+		} else {
+			for index, nsTable := range nsTables {
+				nsTableBytes, _ := base64.StdEncoding.DecodeString(nsTable)
+				ns := e.extractNS(nsTableBytes)
+				if slices.Contains(ns, uint32(e.namespace)) {
+					currentEspressoBlock := lastProcessedEspressoBlock + 1 + uint64(index)
+					slog.Debug("found namespace contained in", "block", currentEspressoBlock)
+					l1FinalizedHeight, l1FinalizedTimestamp := e.readL1(ctx, app, currentEspressoBlock, l1FinalizedHeight)
+					e.readEspresso(ctx, app.Application.ContractAddress, currentEspressoBlock, l1FinalizedHeight, l1FinalizedTimestamp)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (e *EspressoReader) readL1(ctx context.Context, app evmreader.TypeExportApplication, currentBlockHeight uint64, lastProcessedL1Block uint64) (uint64, uint64) {
 	l1FinalizedLatestHeight, l1FinalizedTimestamp := e.getL1FinalizedHeight(currentBlockHeight)
 	// read L1 if there might be update
-	if l1FinalizedLatestHeight > l1FinalizedHeight {
-		slog.Debug("L1 finalized", "from", l1FinalizedHeight, "to", l1FinalizedLatestHeight)
+	if l1FinalizedLatestHeight > lastProcessedL1Block {
+		slog.Debug("L1 finalized", "from", lastProcessedL1Block, "to", l1FinalizedLatestHeight)
 
-		apps := e.getAppsForEvmReader(ctx)
+		var apps []evmreader.TypeExportApplication
+		apps = append(apps, app) // make app into 1-element array
 
-		if len(apps) > 0 {
-			// start reading from the block after the prev height
-			e.evmReader.ReadAndStoreInputs(ctx, l1FinalizedHeight+1, l1FinalizedLatestHeight, apps)
-
-			// check for claim status and output execution
-			e.evmReader.CheckForClaimStatus(ctx, apps, l1FinalizedLatestHeight)
-			e.evmReader.CheckForOutputExecution(ctx, apps, l1FinalizedLatestHeight)
-		}
+		// start reading from the block after the prev height
+		e.evmReader.ReadAndStoreInputs(ctx, lastProcessedL1Block+1, l1FinalizedLatestHeight, apps)
+		// check for claim status and output execution
+		e.evmReader.CheckForClaimStatus(ctx, apps, l1FinalizedLatestHeight)
+		e.evmReader.CheckForOutputExecution(ctx, apps, l1FinalizedLatestHeight)
 	}
 	return l1FinalizedLatestHeight, l1FinalizedTimestamp
 }
 
-func (e *EspressoReader) readEspresso(ctx context.Context, currentBlockHeight uint64, l1FinalizedLatestHeight uint64, l1FinalizedTimestamp uint64) {
+func (e *EspressoReader) readEspresso(ctx context.Context, app common.Address, currentBlockHeight uint64, l1FinalizedLatestHeight uint64, l1FinalizedTimestamp uint64) {
 	transactions, err := e.client.FetchTransactionsInBlock(ctx, currentBlockHeight, e.namespace)
 	if err != nil {
 		slog.Error("failed fetching espresso tx", "error", err)
@@ -153,7 +162,7 @@ func (e *EspressoReader) readEspresso(ctx context.Context, currentBlockHeight ui
 	}
 
 	numTx := len(transactions.Transactions)
-	slog.Debug("Espresso:", "current block", currentBlockHeight, "number of tx", numTx)
+	slog.Debug("Espresso:", "app", app, "current block", currentBlockHeight)
 
 	for i := 0; i < numTx; i++ {
 		transaction := transactions.Transactions[i]
@@ -168,6 +177,10 @@ func (e *EspressoReader) readEspresso(ctx context.Context, currentBlockHeight ui
 		payload := typedData.Message["data"].(string)
 		appAddressStr := typedData.Message["app"].(string)
 		appAddress := common.HexToAddress(appAddressStr)
+		if appAddress != app {
+			slog.Debug("skipping tx that doesn't belong to", "app", app)
+			continue
+		}
 		slog.Info("Espresso input", "msgSender", msgSender, "nonce", nonce, "payload", payload, "appAddrss", appAddress, "tx-id", sigHash)
 
 		// validate nonce

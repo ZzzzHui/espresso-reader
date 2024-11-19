@@ -36,6 +36,7 @@ CREATE TABLE "application"
     "template_hash" BYTEA NOT NULL,
     "template_uri" VARCHAR(4096) NOT NULL,
     "last_processed_block" NUMERIC(20,0) NOT NULL CHECK ("last_processed_block" >= 0 AND "last_processed_block" <= f_maxuint64()),
+    "last_processed_espresso_block" NUMERIC(20,0) NOT NULL CHECK ("last_processed_espresso_block" >= 0 AND "last_processed_espresso_block" <= f_maxuint64()),
     "status" "ApplicationStatus" NOT NULL,
     "iconsensus_address" BYTEA NOT NULL,
     "last_claim_check_block" NUMERIC(20,0) NOT NULL CHECK ("last_claim_check_block" >= 0 AND "last_claim_check_block" <= f_maxuint64()),

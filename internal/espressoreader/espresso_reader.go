@@ -68,28 +68,39 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 					lastProcessedEspressoBlock := app.Application.LastProcessedEspressoBlock
 					lastProcessedL1Block := app.Application.LastProcessedBlock
 					appAddress := app.Application.ContractAddress
-					if lastProcessedEspressoBlock <= e.startingBlock {
-						if e.startingBlock != 0 {
-							lastProcessedEspressoBlock = e.startingBlock
-						} else {
-							lastProcessedEspressoBlock = latestBlockHeight
-						}
-					}
 					if lastProcessedL1Block < e.inputBoxDeploymentBlock {
 						lastProcessedL1Block = e.inputBoxDeploymentBlock - 1
 					}
-					slog.Debug("reading Espresso:", "app", appAddress, "last-processed-block", lastProcessedEspressoBlock, "to-block", latestBlockHeight)
-					err = e.read(ctx, app, lastProcessedEspressoBlock, latestBlockHeight, lastProcessedL1Block)
-					if err != nil {
-						slog.Error("failed reading inputs", "error", err)
-						continue
+					if lastProcessedEspressoBlock <= e.startingBlock {
+						if e.startingBlock != 0 {
+							lastProcessedEspressoBlock = e.startingBlock - 1
+						} else {
+							lastProcessedEspressoBlock = latestBlockHeight - 1
+						}
+						// bootstrap
+						slog.Debug("bootstrapping:", "app", appAddress, "from-block", lastProcessedEspressoBlock, "to-block", latestBlockHeight)
+						err = e.bootstrap(ctx, app, lastProcessedEspressoBlock, latestBlockHeight, lastProcessedL1Block)
+						if err != nil {
+							slog.Error("failed reading inputs", "error", err)
+							continue
+						}
+					} else {
+						// in sync. Process espresso blocks one-by-one
+						currentBlockHeight := lastProcessedEspressoBlock + 1
+						for ; currentBlockHeight < latestBlockHeight; currentBlockHeight++ {
+							slog.Debug("Espresso:", "app", appAddress, "currentBlockHeight", currentBlockHeight)
+							//** read base layer **//
+							var l1FinalizedTimestamp uint64
+							lastProcessedL1Block, l1FinalizedTimestamp = e.readL1(ctx, app, currentBlockHeight, lastProcessedL1Block)
+							//** read espresso **//
+							e.readEspresso(ctx, app.Application.ContractAddress, currentBlockHeight, lastProcessedL1Block, l1FinalizedTimestamp)
+						}
 					}
 
 					// update lastProcessedEspressoBlock in db
 					err = e.repository.UpdateLastProcessedEspressoBlock(ctx, latestBlockHeight, app.Application.ContractAddress)
 					if err != nil {
 						slog.Error("failed updating last processed espresso block", "error", err)
-						continue
 					}
 				}
 			}
@@ -101,7 +112,8 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 	}
 }
 
-func (e *EspressoReader) read(ctx context.Context, app evmreader.TypeExportApplication, lastProcessedEspressoBlock uint64, latestBlockHeight uint64, l1FinalizedHeight uint64) error {
+func (e *EspressoReader) bootstrap(ctx context.Context, app evmreader.TypeExportApplication, lastProcessedEspressoBlock uint64, latestBlockHeight uint64, l1FinalizedHeight uint64) error {
+	var l1FinalizedTimestamp uint64
 	if latestBlockHeight > lastProcessedEspressoBlock {
 		var nsTables []string
 		nsTableBytes := []byte(e.getNSTableByRange(lastProcessedEspressoBlock+1, latestBlockHeight+1))
@@ -127,7 +139,7 @@ func (e *EspressoReader) read(ctx context.Context, app evmreader.TypeExportAppli
 				if slices.Contains(ns, uint32(e.namespace)) {
 					currentEspressoBlock := lastProcessedEspressoBlock + 1 + uint64(index)
 					slog.Debug("found namespace contained in", "block", currentEspressoBlock)
-					l1FinalizedHeight, l1FinalizedTimestamp := e.readL1(ctx, app, currentEspressoBlock, l1FinalizedHeight)
+					l1FinalizedHeight, l1FinalizedTimestamp = e.readL1(ctx, app, currentEspressoBlock, l1FinalizedHeight)
 					e.readEspresso(ctx, app.Application.ContractAddress, currentEspressoBlock, l1FinalizedHeight, l1FinalizedTimestamp)
 				}
 			}
@@ -140,7 +152,7 @@ func (e *EspressoReader) readL1(ctx context.Context, app evmreader.TypeExportApp
 	l1FinalizedLatestHeight, l1FinalizedTimestamp := e.getL1FinalizedHeight(currentBlockHeight)
 	// read L1 if there might be update
 	if l1FinalizedLatestHeight > lastProcessedL1Block {
-		slog.Debug("L1 finalized", "from", lastProcessedL1Block, "to", l1FinalizedLatestHeight)
+		slog.Debug("L1 finalized", "app", app.Application.ContractAddress, "from", lastProcessedL1Block, "to", l1FinalizedLatestHeight)
 
 		var apps []evmreader.TypeExportApplication
 		apps = append(apps, app) // make app into 1-element array

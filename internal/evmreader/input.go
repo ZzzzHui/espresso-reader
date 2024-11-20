@@ -182,6 +182,23 @@ func (r *EvmReader) ReadAndStoreInputs(
 			if !ok {
 				currentInputs = []Input{}
 			}
+			// overriding input index
+			combinedIndex, err := r.repository.GetInputIndex(ctx, address)
+			if err != nil {
+				slog.Error("evmreader: failed to read index", "app", address, "error", err)
+			}
+			if combinedIndex != input.Index && r.shouldModifyIndex == true {
+				slog.Info("evmreader: Overriding input index", "onchain-index", input.Index, "new-index", combinedIndex)
+				input.Index = combinedIndex
+				modifiedRawData, err := r.modifyIndexInRaw(ctx, input.RawData, input.AppAddress, combinedIndex)
+				if err == nil {
+					input.RawData = modifiedRawData
+				}
+			}
+			err = r.repository.UpdateInputIndex(ctx, address)
+			if err != nil {
+				slog.Error("evmreader: failed to update index", "app", address, "error", err)
+			}
 			epochInputMap[currentEpoch] = append(currentInputs, *input)
 
 		}
@@ -299,13 +316,6 @@ func (r *EvmReader) readInputsFromBlockchain(
 			TransactionId:    event.Index.Bytes(),
 		}
 
-		if r.shouldModifyIndex == true {
-			modifiedRawData, err := r.modifyIndex(ctx, input.RawData, input.AppAddress)
-			if err == nil {
-				input.RawData = modifiedRawData
-			}
-		}
-
 		// Insert Sorted
 		appInputsMap[event.AppContract] = insertSorted(
 			sortByInputIndex, appInputsMap[event.AppContract], input)
@@ -332,7 +342,7 @@ func getEpochLength(consensus ConsensusContract) (uint64, error) {
 	return epochLengthRaw.Uint64(), nil
 }
 
-func (r *EvmReader) modifyIndex(ctx context.Context, rawData []byte, appAddress common.Address) ([]byte, error) {
+func (r *EvmReader) modifyIndexInRaw(ctx context.Context, rawData []byte, appAddress common.Address, currentIndex uint64) ([]byte, error) {
 	// load contract ABI
 	abiObject := rollupsmachine.GetAbi()
 	values, err := abiObject.Methods["EvmAdvance"].Inputs.Unpack(rawData[4:])
@@ -364,7 +374,6 @@ func (r *EvmReader) modifyIndex(ctx context.Context, rawData []byte, appAddress 
 	}
 
 	// modify index
-	currentIndex, err := r.repository.GetInputIndex(ctx, appAddress)
 	data.Index = big.NewInt(int64(currentIndex))
 
 	// abi encode again

@@ -1340,6 +1340,7 @@ func (pg *Database) UpdateInputIndex(
 	ctx context.Context,
 	applicationAddress Address,
 ) error {
+	slog.Debug("Updating input index")
 	index, err := pg.GetInputIndex(ctx, applicationAddress)
 	if err != nil {
 		return err

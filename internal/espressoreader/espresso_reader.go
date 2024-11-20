@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -116,7 +115,7 @@ func (e *EspressoReader) bootstrap(ctx context.Context, app evmreader.TypeExport
 	var l1FinalizedTimestamp uint64
 	if latestBlockHeight > lastProcessedEspressoBlock {
 		var nsTables []string
-		nsTableBytes := []byte(e.getNSTableByRange(lastProcessedEspressoBlock+1, latestBlockHeight+1))
+		nsTableBytes := []byte(e.getNSTableByRange(ctx, lastProcessedEspressoBlock+1, latestBlockHeight+1))
 		for len(nsTableBytes) == 0 {
 			select {
 			case <-ctx.Done():
@@ -126,7 +125,7 @@ func (e *EspressoReader) bootstrap(ctx context.Context, app evmreader.TypeExport
 				slog.Debug("ns table is empty in current block range. Retry fetching")
 				var delay time.Duration = 1000
 				time.Sleep(delay * time.Millisecond)
-				nsTableBytes = []byte(e.getNSTableByRange(lastProcessedEspressoBlock+1, latestBlockHeight+1))
+				nsTableBytes = []byte(e.getNSTableByRange(ctx, lastProcessedEspressoBlock+1, latestBlockHeight+1))
 			}
 		}
 		err := json.Unmarshal(nsTableBytes, &nsTables)
@@ -149,7 +148,7 @@ func (e *EspressoReader) bootstrap(ctx context.Context, app evmreader.TypeExport
 }
 
 func (e *EspressoReader) readL1(ctx context.Context, app evmreader.TypeExportApplication, currentBlockHeight uint64, lastProcessedL1Block uint64) (uint64, uint64) {
-	l1FinalizedLatestHeight, l1FinalizedTimestamp := e.getL1FinalizedHeight(currentBlockHeight)
+	l1FinalizedLatestHeight, l1FinalizedTimestamp := e.getL1FinalizedHeight(ctx, currentBlockHeight)
 	// read L1 if there might be update
 	if l1FinalizedLatestHeight > lastProcessedL1Block {
 		slog.Debug("L1 finalized", "app", app.Application.ContractAddress, "from", lastProcessedL1Block, "to", l1FinalizedLatestHeight)
@@ -230,7 +229,7 @@ func (e *EspressoReader) readEspresso(ctx context.Context, app common.Address, c
 		index := &big.Int{}
 		indexUint64, err := e.repository.GetInputIndex(ctx, appAddress)
 		if err != nil {
-			slog.Error("failed to read index", "error", err)
+			slog.Error("failed to read index", "app", appAddress, "error", err)
 		}
 		index.SetUint64(indexUint64)
 		payloadAbi, err := abiObject.Pack("EvmAdvance", chainId, appAddress, msgSender, l1FinalizedLatestHeightBig, l1FinalizedTimestampBig, prevRandao, index, payloadBytes)
@@ -273,6 +272,7 @@ func (e *EspressoReader) readEspresso(ctx context.Context, app common.Address, c
 			continue
 		}
 		input := model.Input{
+			Index:            indexUint64,
 			CompletionStatus: model.InputStatusNone,
 			RawData:          payloadAbi,
 			BlockNumber:      l1FinalizedLatestHeight,
@@ -306,6 +306,11 @@ func (e *EspressoReader) readEspresso(ctx context.Context, app common.Address, c
 			slog.Error("!!!could not update Espresso nonce!!!", "err", err)
 			continue
 		}
+		// update input index
+		err = e.repository.UpdateInputIndex(ctx, appAddress)
+		if err != nil {
+			slog.Error("failed to update index", "app", appAddress, "error", err)
+		}
 	}
 }
 
@@ -323,44 +328,67 @@ func (e *EspressoReader) readEspressoHeader(espressoBlockHeight uint64) string {
 	return string(resBody)
 }
 
-func (e *EspressoReader) getL1FinalizedHeight(espressoBlockHeight uint64) (uint64, uint64) {
-	espressoHeader := e.readEspressoHeader(espressoBlockHeight)
-	for len(espressoHeader) == 0 {
-		slog.Debug("error fetching espresso header", "at height", espressoBlockHeight)
-		slog.Debug("retrying fetching header")
-		espressoHeader = e.readEspressoHeader(espressoBlockHeight)
-	}
+func (e *EspressoReader) getL1FinalizedHeight(ctx context.Context, espressoBlockHeight uint64) (uint64, uint64) {
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("exiting espresso reader")
+			return 0, 0
+		default:
+			espressoHeader := e.readEspressoHeader(espressoBlockHeight)
+			if len(espressoHeader) == 0 {
+				slog.Error("error fetching espresso header", "at height", espressoBlockHeight, "header", espressoHeader)
+				slog.Error("retrying fetching header")
+				continue
+			}
 
-	l1FinalizedNumber := gjson.Get(espressoHeader, "fields.l1_finalized.number").Uint()
-
-	l1FinalizedTimestampStr := gjson.Get(espressoHeader, "fields.l1_finalized.timestamp").Str
-	l1FinalizedTimestampInt, err := strconv.ParseInt(l1FinalizedTimestampStr[2:], 16, 64)
-	if err != nil {
-		slog.Error("hex to int conversion failed", "err", err)
-		os.Exit(1)
+			l1FinalizedNumber := gjson.Get(espressoHeader, "fields.l1_finalized.number").Uint()
+			l1FinalizedTimestampStr := gjson.Get(espressoHeader, "fields.l1_finalized.timestamp").Str
+			if len(l1FinalizedTimestampStr) < 2 {
+				slog.Error("error fetching espresso header l1_finalized.timestamp", "at height", espressoBlockHeight, "header", espressoHeader)
+				slog.Error("retrying fetching")
+				continue
+			}
+			l1FinalizedTimestampInt, err := strconv.ParseInt(l1FinalizedTimestampStr[2:], 16, 64)
+			if err != nil {
+				slog.Error("hex to int conversion failed", "err", err)
+				slog.Error("retrying")
+				continue
+			}
+			l1FinalizedTimestamp := uint64(l1FinalizedTimestampInt)
+			return l1FinalizedNumber, l1FinalizedTimestamp
+		}
 	}
-	l1FinalizedTimestamp := uint64(l1FinalizedTimestampInt)
-	return l1FinalizedNumber, l1FinalizedTimestamp
 }
 
-func (e *EspressoReader) readEspressoHeadersByRange(from uint64, until uint64) string {
-	requestURL := fmt.Sprintf("%s/availability/header/%d/%d", e.url, from, until)
-	res, err := http.Get(requestURL)
-	if err != nil {
-		slog.Error("error making http request", "err", err)
-		os.Exit(1)
-	}
-	resBody, err := io.ReadAll(res.Body)
-	if err != nil {
-		slog.Error("could not read response body", "err", err)
-		os.Exit(1)
-	}
+func (e *EspressoReader) readEspressoHeadersByRange(ctx context.Context, from uint64, until uint64) string {
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("exiting espresso reader")
+			return ""
+		default:
+			requestURL := fmt.Sprintf("%s/availability/header/%d/%d", e.url, from, until)
+			res, err := http.Get(requestURL)
+			if err != nil {
+				slog.Error("error making http request", "err", err)
+				slog.Error("retrying")
+				continue
+			}
+			resBody, err := io.ReadAll(res.Body)
+			if err != nil {
+				slog.Error("could not read response body", "err", err)
+				slog.Error("retrying")
+				continue
+			}
 
-	return string(resBody)
+			return string(resBody)
+		}
+	}
 }
 
-func (e *EspressoReader) getNSTableByRange(from uint64, until uint64) string {
-	espressoHeaders := e.readEspressoHeadersByRange(from, until)
+func (e *EspressoReader) getNSTableByRange(ctx context.Context, from uint64, until uint64) string {
+	espressoHeaders := e.readEspressoHeadersByRange(ctx, from, until)
 	nsTables := gjson.Get(espressoHeaders, "#.fields.ns_table.bytes").Raw
 	return nsTables
 }

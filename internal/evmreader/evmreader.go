@@ -58,6 +58,10 @@ type EvmReaderRepository interface {
 		ctx context.Context,
 		applicationAddress Address,
 	) (uint64, error)
+	UpdateInputIndex(
+		ctx context.Context,
+		applicationAddress Address,
+	) error
 }
 
 // EthClient mimics part of ethclient.Client functions to narrow down the

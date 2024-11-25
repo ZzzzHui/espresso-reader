@@ -86,7 +86,7 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 					} else {
 						// in sync. Process espresso blocks one-by-one
 						currentBlockHeight := lastProcessedEspressoBlock + 1
-						for ; currentBlockHeight < latestBlockHeight; currentBlockHeight++ {
+						for ; currentBlockHeight <= latestBlockHeight; currentBlockHeight++ {
 							slog.Debug("Espresso:", "app", appAddress, "currentBlockHeight", currentBlockHeight)
 							//** read base layer **//
 							var l1FinalizedTimestamp uint64

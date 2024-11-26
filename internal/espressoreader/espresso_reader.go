@@ -70,18 +70,27 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 					if lastProcessedL1Block < e.inputBoxDeploymentBlock {
 						lastProcessedL1Block = e.inputBoxDeploymentBlock - 1
 					}
-					if lastProcessedEspressoBlock <= e.startingBlock {
-						if e.startingBlock != 0 {
-							lastProcessedEspressoBlock = e.startingBlock - 1
-						} else {
-							lastProcessedEspressoBlock = latestBlockHeight - 1
+					// bootstrap if there are more than 100 blocks to catch up
+					if latestBlockHeight-lastProcessedEspressoBlock > 100 {
+						if lastProcessedEspressoBlock == 0 {
+							if e.startingBlock != 0 {
+								lastProcessedEspressoBlock = e.startingBlock - 1
+							} else {
+								lastProcessedEspressoBlock = latestBlockHeight - 1
+							}
 						}
 						// bootstrap
-						slog.Debug("bootstrapping:", "app", appAddress, "from-block", lastProcessedEspressoBlock, "to-block", latestBlockHeight)
+						slog.Debug("bootstrapping:", "app", appAddress, "from-block", lastProcessedEspressoBlock+1, "to-block", latestBlockHeight)
 						err = e.bootstrap(ctx, app, lastProcessedEspressoBlock, latestBlockHeight, lastProcessedL1Block)
 						if err != nil {
 							slog.Error("failed reading inputs", "error", err)
 							continue
+						}
+
+						// update lastProcessedEspressoBlock in db
+						err = e.repository.UpdateLastProcessedEspressoBlock(ctx, latestBlockHeight, app.Application.ContractAddress)
+						if err != nil {
+							slog.Error("failed updating last processed espresso block", "error", err)
 						}
 					} else {
 						// in sync. Process espresso blocks one-by-one
@@ -93,14 +102,15 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 							lastProcessedL1Block, l1FinalizedTimestamp = e.readL1(ctx, app, currentBlockHeight, lastProcessedL1Block)
 							//** read espresso **//
 							e.readEspresso(ctx, app.Application.ContractAddress, currentBlockHeight, lastProcessedL1Block, l1FinalizedTimestamp)
+
+							// update lastProcessedEspressoBlock in db
+							err = e.repository.UpdateLastProcessedEspressoBlock(ctx, currentBlockHeight, app.Application.ContractAddress)
+							if err != nil {
+								slog.Error("failed updating last processed espresso block", "error", err)
+							}
 						}
 					}
 
-					// update lastProcessedEspressoBlock in db
-					err = e.repository.UpdateLastProcessedEspressoBlock(ctx, latestBlockHeight, app.Application.ContractAddress)
-					if err != nil {
-						slog.Error("failed updating last processed espresso block", "error", err)
-					}
 				}
 			}
 
@@ -113,35 +123,43 @@ func (e *EspressoReader) Run(ctx context.Context, ready chan<- struct{}) error {
 
 func (e *EspressoReader) bootstrap(ctx context.Context, app evmreader.TypeExportApplication, lastProcessedEspressoBlock uint64, latestBlockHeight uint64, l1FinalizedHeight uint64) error {
 	var l1FinalizedTimestamp uint64
-	if latestBlockHeight > lastProcessedEspressoBlock {
-		var nsTables []string
-		nsTableBytes := []byte(e.getNSTableByRange(ctx, lastProcessedEspressoBlock+1, latestBlockHeight+1))
-		for len(nsTableBytes) == 0 {
-			select {
-			case <-ctx.Done():
-				slog.Info("exiting espresso reader")
-				return ctx.Err()
-			default:
-				slog.Debug("ns table is empty in current block range. Retry fetching")
-				var delay time.Duration = 1000
-				time.Sleep(delay * time.Millisecond)
-				nsTableBytes = []byte(e.getNSTableByRange(ctx, lastProcessedEspressoBlock+1, latestBlockHeight+1))
+	var nsTables []string
+	batchStartingBlock := lastProcessedEspressoBlock + 1
+	batchLimit := uint64(100)
+	for latestBlockHeight >= batchStartingBlock {
+		select {
+		case <-ctx.Done():
+			slog.Info("exiting espresso reader")
+			return ctx.Err()
+		default:
+			var batchEndingBlock uint64
+			if batchStartingBlock+batchLimit > latestBlockHeight+1 {
+				batchEndingBlock = latestBlockHeight + 1
+			} else {
+				batchEndingBlock = batchStartingBlock + batchLimit
 			}
-		}
-		err := json.Unmarshal(nsTableBytes, &nsTables)
-		if err != nil {
-			slog.Error("failed fetching ns tables", "error", err, "ns table", nsTables)
-		} else {
-			for index, nsTable := range nsTables {
-				nsTableBytes, _ := base64.StdEncoding.DecodeString(nsTable)
-				ns := e.extractNS(nsTableBytes)
-				if slices.Contains(ns, uint32(e.namespace)) {
-					currentEspressoBlock := lastProcessedEspressoBlock + 1 + uint64(index)
-					slog.Debug("found namespace contained in", "block", currentEspressoBlock)
-					l1FinalizedHeight, l1FinalizedTimestamp = e.readL1(ctx, app, currentEspressoBlock, l1FinalizedHeight)
-					e.readEspresso(ctx, app.Application.ContractAddress, currentEspressoBlock, l1FinalizedHeight, l1FinalizedTimestamp)
+			nsTable, err := e.getNSTableByRange(ctx, batchStartingBlock, batchEndingBlock)
+			if err != nil {
+				return err
+			}
+			nsTableBytes := []byte(nsTable)
+			err = json.Unmarshal(nsTableBytes, &nsTables)
+			if err != nil {
+				slog.Error("failed fetching ns tables", "error", err, "ns table", nsTables)
+			} else {
+				for index, nsTable := range nsTables {
+					nsTableBytes, _ := base64.StdEncoding.DecodeString(nsTable)
+					ns := e.extractNS(nsTableBytes)
+					if slices.Contains(ns, uint32(e.namespace)) {
+						currentEspressoBlock := batchStartingBlock + uint64(index)
+						slog.Debug("found namespace contained in", "block", currentEspressoBlock)
+						l1FinalizedHeight, l1FinalizedTimestamp = e.readL1(ctx, app, currentEspressoBlock, l1FinalizedHeight)
+						e.readEspresso(ctx, app.Application.ContractAddress, currentEspressoBlock, l1FinalizedHeight, l1FinalizedTimestamp)
+					}
 				}
 			}
+			// update loop var
+			batchStartingBlock += batchLimit
 		}
 	}
 	return nil
@@ -173,7 +191,6 @@ func (e *EspressoReader) readEspresso(ctx context.Context, app common.Address, c
 	}
 
 	numTx := len(transactions.Transactions)
-	slog.Debug("Espresso:", "app", app, "current block", currentBlockHeight)
 
 	for i := 0; i < numTx; i++ {
 		transaction := transactions.Transactions[i]
@@ -346,7 +363,9 @@ func (e *EspressoReader) getL1FinalizedHeight(ctx context.Context, espressoBlock
 			l1FinalizedTimestampStr := gjson.Get(espressoHeader, "fields.l1_finalized.timestamp").Str
 			if len(l1FinalizedTimestampStr) < 2 {
 				slog.Error("error fetching espresso header l1_finalized.timestamp", "at height", espressoBlockHeight, "header", espressoHeader)
-				slog.Error("retrying fetching")
+				slog.Error("retry fetching")
+				var delay time.Duration = 3000
+				time.Sleep(delay * time.Millisecond)
 				continue
 			}
 			l1FinalizedTimestampInt, err := strconv.ParseInt(l1FinalizedTimestampStr[2:], 16, 64)
@@ -387,10 +406,25 @@ func (e *EspressoReader) readEspressoHeadersByRange(ctx context.Context, from ui
 	}
 }
 
-func (e *EspressoReader) getNSTableByRange(ctx context.Context, from uint64, until uint64) string {
-	espressoHeaders := e.readEspressoHeadersByRange(ctx, from, until)
-	nsTables := gjson.Get(espressoHeaders, "#.fields.ns_table.bytes").Raw
-	return nsTables
+func (e *EspressoReader) getNSTableByRange(ctx context.Context, from uint64, until uint64) (string, error) {
+	var nsTables string
+	for len(nsTables) == 0 {
+		select {
+		case <-ctx.Done():
+			slog.Info("exiting espresso reader")
+			return "", ctx.Err()
+		default:
+			espressoHeaders := e.readEspressoHeadersByRange(ctx, from, until)
+			nsTables = gjson.Get(espressoHeaders, "#.fields.ns_table.bytes").Raw
+			if len(nsTables) == 0 {
+				slog.Debug("ns table is empty in current block range. Retry fetching")
+				var delay time.Duration = 2000
+				time.Sleep(delay * time.Millisecond)
+			}
+		}
+	}
+
+	return nsTables, nil
 }
 
 func (e *EspressoReader) extractNS(nsTable []byte) []uint32 {

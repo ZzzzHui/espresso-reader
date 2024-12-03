@@ -1,0 +1,17 @@
+.vscode
+.env
+.DS_Store
+build/deployments
+**/.idea/
+machine-snapshot/**
+/deployment.json
+/anvil_state.json
+/cartesi-rollups-authority-claimer
+/cartesi-rollups-cli
+/cartesi-rollups-evm-reader
+/cartesi-rollups-node
+/cartesi-rollups-advancer
+/cartesi-rollups-validator
+/cartesi-rollups-claimer
+/rollups-contracts
+espresso-reader

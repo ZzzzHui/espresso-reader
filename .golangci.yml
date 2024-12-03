@@ -1,0 +1,16 @@
+linters:
+  enable:
+    - exhaustive
+    - goconst
+    #- godox
+    - gofmt
+    - lll
+    - mnd
+    - misspell
+linters-settings:
+  lll:
+    line-length: 120
+    tab-width: 4
+  mnd:
+    ignored-functions:
+      - "^make"

@@ -12,7 +12,6 @@ env:
 	@echo export CARTESI_TEST_POSTGRES_ENDPOINT="postgres://test_user:password@localhost:5432/test_rollupsdb?sslmode=disable"
 	@echo export CARTESI_TEST_MACHINE_IMAGES_PATH=\"$(CARTESI_TEST_MACHINE_IMAGES_PATH)\"
 	@echo export PATH=$(CURDIR):$$PATH
-	@echo export ESPRESSO_BASE_URL="https://query.decaf.testnet.espresso.network/v0"
-	@echo export ESPRESSO_STARTING_BLOCK="882494"
+	@echo export ESPRESSO_BASE_URL="https://query.decaf.testnet.espresso.network"
+	@echo export ESPRESSO_STARTING_BLOCK="977675"
 	@echo export ESPRESSO_NAMESPACE="55555"
-	@echo export MAIN_SEQUENCER="espresso" # set to either espresso or ethereum

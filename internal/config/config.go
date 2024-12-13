@@ -39,7 +39,6 @@ type NodeConfig struct {
 	EspressoStartingBlock                  uint64
 	EspressoNamespace                      uint64
 	EspressoServiceEndpoint                string
-	MainSequencer                          string
 }
 
 // Auth is used to sign transactions.
@@ -98,11 +97,10 @@ func FromEnv() NodeConfig {
 	config.AdvancerPollingInterval = GetAdvancerPollingInterval()
 	config.ValidatorPollingInterval = GetValidatorPollingInterval()
 	config.ClaimerPollingInterval = GetClaimerPollingInterval()
-	config.EspressoBaseUrl = GetBaseUrl()
+	config.EspressoBaseUrl = GetBaseUrl() + "/v0"
 	config.EspressoStartingBlock = GetStartingBlock()
 	config.EspressoNamespace = GetNamespace()
 	config.EspressoServiceEndpoint = GetServiceEndpoint()
-	config.MainSequencer = GetSequencer()
 	return config
 }
 

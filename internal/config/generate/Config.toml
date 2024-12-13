@@ -245,16 +245,6 @@ description = """
 URL to Espresso nonce and submit service"""
 
 #
-# Sequencer
-#
-
-[sequencer.MAIN_SEQUENCER]
-default = "espresso"
-go-type = "string"
-description = """
-Main sequencer."""
-
-#
 # Temporary
 #
 

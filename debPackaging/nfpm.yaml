@@ -1,0 +1,19 @@
+# This is an example nfpm configuration file.
+# Make sure to check the documentation at https://nfpm.goreleaser.com
+#
+# The lines below are called `modelines`. See `:help modeline`
+# Feel free to remove those if you don't want/need to use them.
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+name: "espresso-reader"
+arch: "amd64"
+platform: "linux"
+version: "1.0.0"
+maintainer: "ZzzzHui <zehnzhe@gmail.com>"
+contents:
+  - src: ../espresso-reader
+    dst: /usr/bin/espresso-reader
+
+  - src: ../internal/evmreader/abi.json
+    dst: /internal/evmreader/abi.json
